@@ -760,3 +760,169 @@ func (receiver IndexController) Index(context *gin.Context) {
 	receiver.Success(context)
 }
 ```
+
+### 中间件
+  - 中间是匹配路由前和匹配路由完成后执行的操作
+
+```go
+package main
+
+import (
+	"Gin-Note/routers"
+	"fmt"
+	"github.com/gin-gonic/gin"
+	"time"
+)
+
+// 中间件
+func initMiddlewareOne(context *gin.Context) {
+	start := time.Now().UnixNano()
+	fmt.Println("我先调用-initMiddlewareOne")
+
+	// 调用该请求的剩余处理程序
+	context.Next()
+
+	end := time.Now().UnixNano()
+	fmt.Println("我最后调用-initMiddlewareOne")
+
+	fmt.Println("TimeOne: ", end-start)
+}
+
+func initMiddlewareTwo(context *gin.Context) {
+	start := time.Now().UnixNano()
+	fmt.Println("我先调用-initMiddlewareTwo")
+
+	// 调用该请求的剩余处理程序
+	context.Next()
+
+	end := time.Now().UnixNano()
+	fmt.Println("我最后调用-initMiddlewareTwo")
+
+	fmt.Println("TimeTwo: ", end-start)
+}
+
+func main() {
+	r := gin.Default()
+
+	r.Static("/static", "./static")
+
+	r.LoadHTMLGlob("templates/**/*")
+
+	// 配置全局中间件
+	r.Use(initMiddlewareOne, initMiddlewareOne)
+	
+
+	r.GET("/", initMiddlewareOne, func(context *gin.Context) {
+		context.String(200, "123")
+	})
+
+	r.GET("/login", initMiddlewareOne, initMiddlewareTwo, func(context *gin.Context) {
+		fmt.Println("登录")
+		context.String(200, "login")
+	})
+
+	r.GET("/logout", func(context *gin.Context) {
+		context.String(200, "logout")
+	})
+
+	r.Run(":8080")
+}
+```
+
+- #### 路由里添加中间件
+
+```go
+package routers
+
+import (
+	"Gin-Note/controllers/index"
+	"Gin-Note/middlewares"
+	"github.com/gin-gonic/gin"
+)
+
+func DefaultRoutersInit(r *gin.Engine) {
+
+	// 路由分组
+	defaultRouters := r.Group("/", middlewares.InitMiddleware)
+	// 路由组使用中间间
+	defaultRouters.Use(middlewares.InitMiddleware)
+	{
+		// 自定义控制器抽离
+		defaultRouters.GET("/", index.DefaultController{}.Index)
+		defaultRouters.GET("/new", index.DefaultController{}.New)
+	}
+}
+```
+```go
+package middlewares
+
+import (
+	"fmt"
+	"github.com/gin-gonic/gin"
+	"time"
+)
+
+func InitMiddleware(context *gin.Context) {
+	fmt.Println(time.Now())
+}
+```
+
+- #### 中间件和控制器通信
+```go
+package middlewares
+
+import (
+	"fmt"
+	"github.com/gin-gonic/gin"
+	"time"
+)
+
+func InitMiddleware(context *gin.Context) {
+	fmt.Println(time.Now())
+	context.Set("username", "admin")  // 设置传输数据
+}
+```
+
+```go
+package index
+
+import (
+	"fmt"
+	"github.com/gin-gonic/gin"
+	"net/http"
+)
+
+type DefaultController struct {
+}
+
+func (receiver DefaultController) Index(context *gin.Context) {
+	context.HTML(http.StatusOK, "default/index.html", gin.H{})
+	value, exists := context.Get("username") // 获取中间件设置的数据
+	v, _ := value.(string)                   // 类型断言
+	fmt.Println(value, exists, v)
+}
+
+func (receiver DefaultController) New(context *gin.Context) {
+	context.String(http.StatusOK, "new")
+}
+```
+
+- #### 中间件中 协程不影响主程
+```go
+package middlewares
+
+import (
+	"fmt"
+	"github.com/gin-gonic/gin"
+	"time"
+)
+
+func InitMiddleware(context *gin.Context) {
+	// 定义goroutine统计日志
+	cp := context.Copy()
+	go func() {
+		time.Sleep(2 * time.Second)
+		fmt.Println("in path: ", cp.Request.URL.Path)
+	}()
+}
+```

@@ -7,6 +7,7 @@ import (
 
 func AdminRoutersInit(r *gin.Engine) {
 	adminRouters := r.Group("/admin")
+
 	{
 		// 自定义控制器抽离
 		adminRouters.GET("/", admin.IndexController{}.Index)
