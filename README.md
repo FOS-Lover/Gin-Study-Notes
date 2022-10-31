@@ -907,7 +907,7 @@ func (receiver DefaultController) New(context *gin.Context) {
 }
 ```
 
-- #### 中间件中 协程不影响主程
+- #### 中间件分组和协程不影响主程
 ```go
 package middlewares
 
@@ -924,5 +924,482 @@ func InitMiddleware(context *gin.Context) {
 		time.Sleep(2 * time.Second)
 		fmt.Println("in path: ", cp.Request.URL.Path)
 	}()
+}
+```
+
+```go
+package routers
+
+import (
+	"Gin-Note/controllers/index"
+	"Gin-Note/middlewares"
+	"github.com/gin-gonic/gin"
+)
+
+func DefaultRoutersInit(r *gin.Engine) {
+
+	// 路由分组
+	defaultRouters := r.Group("/", middlewares.InitMiddleware)
+	// 路由组使用中间间
+	defaultRouters.Use(middlewares.InitMiddleware)
+	{
+		// 自定义控制器抽离
+		defaultRouters.GET("/", index.DefaultController{}.Index)
+		defaultRouters.GET("/new", index.DefaultController{}.New)
+	}
+}
+```
+
+### 自定义Model
+
+```go
+package models
+
+import (
+	"time"
+)
+
+func UnixToTime(timestamp int) string {
+	t := time.Unix(int64(timestamp), 0)
+	return t.Format("2006-01-02 15:04:05")
+}
+```
+
+### 文件上传
+
+- #### 单文件和多文件
+
+```go
+package main
+
+import (
+	"Gin-Note/models"
+	"Gin-Note/routers"
+	"fmt"
+	"github.com/gin-gonic/gin"
+	"html/template"
+	"log"
+	"net/http"
+	"path"
+	"time"
+)
+
+func main() {
+	r := gin.Default()
+
+	r.Static("/static", "./static")
+	
+	// 单文件上传
+	r.POST("/upload", func(context *gin.Context) {
+		file, err := context.FormFile("file")
+		// file.Filename 文件名称
+		// 文件路径
+		dst := path.Join("./static/upload", file.Filename) // ./static/upload/test.jpg
+		if err != nil {
+			log.Println(err)
+		} else {
+			// 上传文件
+			context.SaveUploadedFile(file, dst)
+			context.JSON(http.StatusOK, gin.H{
+				"success": true,
+				"dst":     dst,
+			})
+		}
+	})
+
+	// 多文件上传
+	r.POST("/uploads", func(context *gin.Context) {
+		file1, err1 := context.FormFile("file1")
+		file2, err2 := context.FormFile("file2")
+		// 文件路径
+		dst1 := path.Join("./static/upload", file1.Filename)
+		if err1 == nil {
+			context.SaveUploadedFile(file1, dst1)
+		}
+		// 文件路径
+		dst2 := path.Join("./static/upload", file2.Filename)
+		if err2 == nil {
+			context.SaveUploadedFile(file2, dst2)
+		}
+		context.JSON(http.StatusOK, gin.H{
+			"success": http.StatusOK,
+			"file1":   dst1,
+			"file2":   dst2,
+		})
+	})
+
+	// 相同名多文件上传
+	r.POST("/uploadFile", func(context *gin.Context) {
+		form, _ := context.MultipartForm()
+		files := form.File["files[]"]
+		for _, file := range files {
+			dst := path.Join("./static/upload", file.Filename)
+			context.SaveUploadedFile(file, dst)
+		}
+		context.JSON(http.StatusOK, gin.H{
+			"success": http.StatusOK,
+			"data":    [...]string{},
+		})
+	})
+
+	r.Run(":8080")
+}
+```
+
+- #### 按日期存储文件
+
+```go
+package main
+
+import (
+	"Gin-Note/models"
+	"Gin-Note/routers"
+	"fmt"
+	"github.com/gin-gonic/gin"
+	"html/template"
+	"net/http"
+	"os"
+	"path"
+	"strconv"
+	"time"
+)
+
+func main() {
+	r := gin.Default()
+
+	r.Static("/static", "./static")
+	
+
+	r.POST("/upload", func(context *gin.Context) {
+		// 获取上传文件
+		file, err := context.FormFile("file")
+		if err == nil {
+			// 获取后缀名 判断类型是否正确 .jpg .png .gif .jpeg
+			extName := path.Ext(file.Filename)
+			allowExtMap := map[string]bool{
+				".jpg":  true,
+				".png":  true,
+				".gif":  true,
+				".jpeg": true,
+			}
+			if _, ok := allowExtMap[extName]; !ok {
+				context.String(200, "上传的文件类型不合法")
+				return
+			}
+			// 创建图片保存目录 static/upload/20221028
+			day := time.Now().Format("20060102")
+			dir := "./static/upload/" + day
+			err := os.MkdirAll(dir, 0666)
+			if err != nil {
+				context.String(200, "创建目录失败")
+				return
+			}
+			// 生成文件名称和文件保存的目录
+			fileName := strconv.FormatInt(time.Now().Unix(), 10) + extName
+			dst := path.Join(dir, fileName)
+			// 执行上传
+			context.SaveUploadedFile(file, dst)
+			context.JSON(http.StatusOK, gin.H{
+				"success": true,
+				"dst":     dst,
+			})
+		}
+	})
+
+	r.Run(":8080")
+}
+```
+
+### Cookie
+  - 页面之间数据共享
+```go
+package index
+
+import (
+	"fmt"
+	"github.com/gin-gonic/gin"
+	"net/http"
+)
+
+type DefaultController struct {
+}
+
+func (receiver DefaultController) Index(context *gin.Context) {
+	// 设置Cookie 参数: 属性 值 过期时间 域 域名 设置http/https 反正xss攻击
+	context.SetCookie("username", "admin", 3600, "/", "localhost", false, false)
+	// 删除Cookie
+	//context.SetCookie("username", "admin", -1, "/", "localhost", false, false)
+
+	context.HTML(http.StatusOK, "default/index.html", gin.H{})
+
+}
+
+func (receiver DefaultController) New(context *gin.Context) {
+	// 获取Cookie
+	cookie, _ := context.Cookie("username")
+	context.String(http.StatusOK, cookie)
+}
+```
+
+- #### 多个二级域名共享Cookie
+  - 域名前面加个`.`
+  - ```go
+    context.SetCookie("username", "admin", 3600, "/", ".admin.com", false, false)
+    
+### Session
+  - session是另一种记录客户状态的机制，不同的是Cookie保存在客户端浏览器中，而Session保存在服务器
+
+- #### 安装
+  - `go get github.com/gin-contrib/sessions`
+  - `go get github.com/gin-contrib/sessions/cookie`
+
+- #### 配置和使用
+
+```go
+package main
+
+import (
+	"Gin-Note/models"
+	"Gin-Note/routers"
+	"fmt"
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-contrib/sessions/cookie"
+	"github.com/gin-gonic/gin"
+	"html/template"
+	"time"
+)
+
+func main() {
+	r := gin.Default()
+
+	r.Static("/static", "./static")
+	
+
+	// 配置session中间件
+	// 创建一个基于cookie的存储引擎，secret参数是用于加密的密钥
+	store := cookie.NewStore([]byte("secret"))
+	// store是前面创建的存储引擎，我们可以替换成其他存储引擎
+	r.Use(sessions.Sessions("mysession", store))
+	
+	// 使用session
+	r.GET("/session", func(context *gin.Context) {
+		// 设置sessions
+		session := sessions.Default(context)
+		session.Set("username", "test")
+		session.Save() // 设置session必须调用
+	})
+	r.GET("/getSession", func(context *gin.Context) {
+		// 获取sessions
+		session := sessions.Default(context)
+		get := session.Get("username")
+		context.String(200, "%v", get)
+	})
+
+	r.Run(":8080")
+}
+```
+
+- #### 分布式Session
+
+- ##### 安装redis
+  - `https://github.com/tporadowski/redis/releases`
+
+```go
+package main
+
+import (
+	"Gin-Note/models"
+	"Gin-Note/routers"
+	"fmt"
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-contrib/sessions/redis"
+	"github.com/gin-gonic/gin"
+	"html/template"
+	"time"
+)
+
+func main() {
+	r := gin.Default()
+	
+
+	r.Static("/static", "./static")
+
+	// 配置session redis中间件
+	store, _ := redis.NewStore(10, "tcp", "127.0.0.1:6379", "", []byte("secret"))
+	// store是前面创建的存储引擎，我们可以替换成其他存储引擎
+	r.Use(sessions.Sessions("mysession", store))
+
+	// 使用session
+	r.GET("/session", func(context *gin.Context) {
+		// 设置sessions
+		session := sessions.Default(context)
+		// 配置session过期时间
+		session.Options(sessions.Options{
+			MaxAge: 3600*6,	// 单位是秒
+		})
+		session.Set("username", "test")
+		session.Save() // 设置session必须调用
+	})
+	r.GET("/getSession", func(context *gin.Context) {
+		// 获取sessions
+		session := sessions.Default(context)
+		get := session.Get("username")
+		context.String(200, "%v", get)
+	})
+
+	r.Run(":8080")
+}
+```
+
+### MySQL数据库
+
+- #### MySQL常用命令
+  - `mysql -uroot -p` 连接数据库
+  - `show databases;` 查看当前连接的数据库
+  - `use gin;` 使用数据库
+  - `show tables;` 查看数据库表
+  - `select * from users;` 查看表数据
+  - `select id,name from users;` 根据字段查找数据
+  - `select id,name from users where id=1;` 根据条件查找数据
+  - `create database book;` 创建数据库
+  - `create table types(id int(11), name varchar(255), number int(3));` 创建表
+  - `describe types;` 查看表结构
+  - `insert into types(id,name,number) values (1,"Func",1);` 添加数据
+  - `update types set number=2 where name="Map";` 修改字段数据
+  - `deleter from types where id=2;` 删除数据
+  - `select * from types order by id asc;` 以id升序排序
+  - `select * from types order by id desc;` 以id降序排序
+  - `select * from types order by name desc;` 以name降序排序
+  - `select * from types order by name asc;` 以name升序排序
+  - `select * from types order by name desc,number asc;` 以name降序和number升序排序
+  - `select count(1) from types;` 统计数量
+  - `select * from types limit 2;` 查找两条数据
+  - `select * from types limit 2,2;` 跳过2条查询2条数据
+  - `drop table test;` 删除表
+  - `drop database test;` 删除数据库
+
+- #### MySQL关键字和基本操作
+  - ##### MySQL字段类型
+    - 整数型 `tinyint` `smallint` `mediumint` `int` `bigint`
+    - 浮点型 `float` `double` `decimal`
+    - 字符型 `char` `varchar`
+    - 备注型 `tinytext` `text` `mediumtext` `longtext`
+  - ##### 查询语句详解和IN OR AND BETWEEN
+    - `select * from class;` 查询所有数据
+    - `select name,score from class;` 只查找name,score的数据
+    - `select * from class where score > 60;` 查找score大于60的数据
+    - `select * from class where email is null;` 查找email为null的数据
+    - `select * from class where email is null or email="";` 查找email为null或为""的数据
+    - `select * from class where email is not null;` 查找email不为null的数据
+    - `select * from class where score >= 60 and score <=90;` 查找score大于等于和60小于等于90的数据
+    - `select * from class where score between 60 and 90;`
+    - `select * from class where score not between 60 and 90;` 查找score不在大于等于和60小于等于90的数据
+    - `select * from class where score=20 or score=30;` 查找score等于20或score等于30的数据
+    - `select * from class where score in(20,80,90);` 查找score是20,80,90的数据
+    - `select * from class where email like "%test%";` 模糊查找email
+  - ##### 分组函数
+    - `select avg(score) from class;` 求score平均值
+    - `select count(score) from class;` 求score记录总数
+    - `select max(score) from class;` 求score最大值
+    - `select min(score) from class;` 求score最小值
+    - `select sum(score) from class;` 求score总和
+    - `select * from class where score in(select max(score) from class);` 查找score最大值且查找对应数据
+    - `select * from class where score in(select min(score) from class);` 查找score最小值且查找对应数据
+  - ##### 别名
+    - `select id,name as n,email as e, score as s from class;`
+    - `select min(score) as minscore from class;`
+
+- #### MySQL数据库表关联查询
+  - 表与表之间一般存在3种关系，一对一，一对多，多对多关系
+
+- #### MySQL事务和锁定
+  - 事务处理可以用来维护数据库的完整性，保证成批的SQL语句要么全部执行，要么全部不执行
+    - `begin;` 开启事务
+    - `update user set balance=balance-100 where id=1;`
+    - `commit;` 提交事务
+    - `rollback;` 事务回滚
+  - 读锁
+    - `lock table user read;` 添加user表为读锁
+      - `insert into user(username) values("test2");`
+      - `ERROR 1099 (HY000): Table 'user' was locked with a READ lock and can't be updated`
+    - `unlock tables;` 释放锁
+  - 写锁
+    - 只有锁表的用户可以进行读写操作，其他用户不行
+    - `lock table user write;` 添加user表为写锁
+    - `unlock tables;` 释放锁
+
+### gorm配置和数据库增删改查
+  - #### 安装gorm
+    - `go get -u gorm.io/gorm`
+    - `go get -u gorm.io/driver/mysql`
+
+```go
+package admin
+
+import (
+	"Gin-Note/datastruct"
+	"Gin-Note/models"
+	"github.com/gin-gonic/gin"
+	"net/http"
+	"time"
+)
+
+// 结构体继承
+type UserController struct {
+}
+
+func (c UserController) Index(context *gin.Context) {
+	// 查询数据库所有数据
+	user := []datastruct.User{}
+	models.DB.Find(&user)
+	context.JSON(http.StatusOK, gin.H{
+		"result": user,
+	})
+
+	// 查询age大于20的用户
+	//user := []datastruct.User{}
+	//models.DB.Where("age>20").Find(&user)
+	//context.JSON(http.StatusOK, gin.H{
+	//	"result": user,
+	//})
+}
+
+func (c UserController) Add(context *gin.Context) {
+	// 添加数据
+	user := datastruct.User{
+		Username: "test3",
+		Age:      27,
+		Email:    "test@test.com",
+		AddTime:  time.Now().Year(),
+	}
+	models.DB.Create(&user)
+	context.JSON(http.StatusOK, gin.H{
+		"result": user,
+	})
+
+}
+
+func (c UserController) Edit(context *gin.Context) {
+	// 更新数据
+	user := datastruct.User{
+		Id: 3,
+	}
+	models.DB.Find(&user).Updates(datastruct.User{
+		Username: "ttttttttttt",
+	})
+	context.JSON(http.StatusOK, gin.H{
+		"result": user,
+	})
+}
+
+func (c UserController) Delete(context *gin.Context) {
+	// 删除一条数据
+	user := datastruct.User{
+		Id: 1,
+	}
+	models.DB.Find(&user).Delete(&user)
+	context.JSON(http.StatusOK, gin.H{
+		"result": user,
+	})
 }
 ```
