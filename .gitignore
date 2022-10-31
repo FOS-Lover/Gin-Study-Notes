@@ -2,3 +2,5 @@
 .idea/*
 tmp
 tmp/*
+static/upload/*
+static/images/*
